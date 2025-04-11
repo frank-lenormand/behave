@@ -162,3 +162,29 @@ def ensure_stream_with_encoder(stream, encoding=None):
         # even if it doesn't use it (or it might be explicitly None)
         stream = codecs.getwriter(encoding)(stream)
         return stream
+
+
+def count_indent_level(line, indent_chars = None):
+    """Count how many indent characters (default: space, tab) lead the line.
+    Counting stops on the first character that isn't identical to the first
+    indentation character of the line.
+
+    :return: Amount of indent characters that the line starts with.
+    """
+    if indent_chars is None:
+        indent_chars = [" ", "\t"]
+
+    if not line:
+        return 0
+
+    first_char = line[0]
+    if first_char not in indent_chars:
+        return 0
+
+    indent_level = 0
+    for cur_char in line:
+        if cur_char != first_char:
+            break
+        indent_level += 1
+
+    return indent_level

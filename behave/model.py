@@ -1749,6 +1749,11 @@ class Step(BasicStatement, Replayable):
        An instance of :class:`~behave.model.Table` that came with the step
        in the *feature file*.
 
+    .. attribute:: indent_level
+
+       The amount of indentation characters that lead the step line (i.e.
+       unstripped).
+
     .. attribute:: status
 
        Read-Only. A summary status of the step's run. If read before the
@@ -1801,11 +1806,12 @@ class Step(BasicStatement, Replayable):
     type = "step"
 
     def __init__(self, filename, line, keyword, step_type, name, text=None,
-                 table=None):
+                 table=None, indent_level=None):
         super(Step, self).__init__(filename, line, keyword, name)
         self.step_type = step_type
         self.text = text
         self.table = table
+        self.indent_level = indent_level
 
         self.status = Status.untested
         self.hook_failed = False

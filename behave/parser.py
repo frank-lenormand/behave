@@ -50,7 +50,7 @@ import re
 import sys
 import six
 from behave import model, i18n
-from behave.textutil import text as _text
+from behave.textutil import text as _text, count_indent_level
 from behave._types import NoneType
 
 
@@ -244,6 +244,7 @@ class Parser(object):
         self.multiline_start = None
         self.multiline_leading = None
         self.multiline_terminator = None
+        self.multiline_indent = None
 
         self.filename = None
         self.scenario_container = None  # Feature or Rule.
@@ -270,6 +271,7 @@ class Parser(object):
         self.multiline_start = None
         self.multiline_leading = None
         self.multiline_terminator = None
+        self.multiline_indent = None
 
         self.filename = filename
         self.scenario_container = None  # Feature or Rule.
@@ -667,10 +669,18 @@ class Parser(object):
         DETECT:
           * next Scenario/ScenarioOutline or Examples (in a ScenarioOutline)
         """
+        indent_level = count_indent_level(line)
+        previous_indent_level = None if not self.statement.steps else self.statement.steps[-1].indent_level
         # pylint: disable=R0911
         #   R0911   Too many return statements (8/6)
         stripped = line.lstrip()
-        if stripped.startswith('"""') or stripped.startswith("'''"):
+        is_multiline_text = any((
+            stripped.startswith('"""'),
+            stripped.startswith("'''"),
+            # NOTE: 2 is a magic number, here.
+            previous_indent_level is not None and previous_indent_level - indent_level >= 2,
+        ))
+        if is_multiline_text:
             # -- CASE: Multi-line text (docstring) after a step detected.
             # REQUIRE: Multi-line text follows a step.
             if not self.statement.steps:
@@ -679,8 +689,11 @@ class Parser(object):
 
             self.state = State.MULTILINE_TEXT
             self.multiline_start = self.line
-            self.multiline_terminator = stripped[:3]
-            self.multiline_leading = line.index(stripped[0])
+            if stripped[0] in ["'", '"']:
+                self.multiline_terminator = stripped[:3]
+                self.multiline_leading = line.index(stripped[0])
+            else:
+                self.multiline_indent = previous_indent_level
             return True
 
         line = line.strip()
@@ -706,16 +719,24 @@ class Parser(object):
 
     def action_multiline_text(self, line):
         """Parse remaining multi-line/docstring text below a step
-        after the triple-quotes were detected:
+        after the triple-quotes or indentation were detected:
 
         * triple-double-quotes or
-        * triple-single-quotes
+        * triple-single-quotes or
+        * indentation level greater or equal to 2 compared to the step line
 
         Leading and trailing triple-quotes must be the same.
 
+        Indentation level must be the same as the original step line to close
+        the multi-line text.
+
         :param line:  Parsed line, as part of a multi-line text (as string).
         """
-        if line.strip().startswith(self.multiline_terminator):
+        indent_level = count_indent_level(line)
+        if any((
+            self.multiline_terminator is not None and line.strip().startswith(self.multiline_terminator),
+            self.multiline_indent is not None and indent_level == self.multiline_indent,
+        )):
             # -- CASE: Handle the end of a multi-line text part.
             # Store the multi-line text in the step object (and continue).
             this_step = self.statement.steps[-1]
@@ -726,16 +747,23 @@ class Parser(object):
             # -- RESET INTERNALS: For next step
             self.lines = []
             self.multiline_terminator = None
+            self.multiline_indent = None
             self.state = State.STEPS  # NEXT-STATE: Accept additional step(s).
             return True
 
         # -- SPECIAL CASE: Strip trailing whitespace (whitespace normalization).
         # HINT: Required for Windows line-endings, like "\r\n", etc.
-        text_line = line[self.multiline_leading:].rstrip()
+        if self.multiline_leading is not None:
+            text_line = line[self.multiline_leading:].rstrip()
+        else:
+            text_line = line.rstrip()
         self.lines.append(text_line)
 
-        # -- BETTER DIAGNOSTICS: May remove non-whitespace in execute_steps()
-        removed_line_prefix = line[:self.multiline_leading]
+        if self.multiline_leading is not None:
+            # -- BETTER DIAGNOSTICS: May remove non-whitespace in execute_steps()
+            removed_line_prefix = line[:self.multiline_leading]
+        else:
+            removed_line_prefix = line
         if removed_line_prefix.strip():
             message = u"BAD-INDENT in multiline text: "
             message += u"Line '%s' would strip leading '%s'" % \
@@ -852,6 +880,7 @@ class Parser(object):
         return tags
 
     def parse_step(self, line):
+        indent_level = count_indent_level(line)
         for step_type in ("given", "when", "then", "and", "but"):
             for kw in self.keywords[step_type]:
                 # try to match the keyword; also attempt a purely lowercase
@@ -886,7 +915,7 @@ class Parser(object):
 
                 keyword = kw.rstrip()  # HINT: Strip optional trailing SPACE.
                 step = model.Step(self.filename, self.line,
-                                  keyword, step_type, step_text_after_keyword)
+                                  keyword, step_type, step_text_after_keyword, indent_level=indent_level)
                 return step
         return None
 
